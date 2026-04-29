@@ -1,0 +1,22 @@
+[project]
+name = "micro-tribe-gemma"
+version = "0.1.0"
+description = "MicroTRIBE-Gemma: Simplified TriBE v2 brain encoding using Gemma 4 E2B-it"
+requires-python = ">=3.11"
+dependencies = [
+    "torch>=2.3.0",
+    "transformers>=4.51.0",
+    "accelerate>=1.0.0",
+    "torchvision>=0.18.0",
+    "librosa>=0.10.0",
+    "opencv-python>=4.0.0",
+    "pillow>=10.0.0",
+    "pandas>=2.0.0",
+    "openpyxl>=3.1.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

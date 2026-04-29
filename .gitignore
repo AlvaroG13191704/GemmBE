@@ -1,0 +1,43 @@
+# Local files and datasets
+/papers
+/docs
+/Sherlock
+
+# Virtual Environment
+.venv/
+venv/
+env/
+ENV/
+
+# Python Cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Logs
+logs/
+*.log
+
+# IDE / Editor Settings
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS Files
+.DS_Store
+Thumbs.db
+
+# Large Data / Checkpoints (unless intentionally versioned)
+checkpoints/
+outputs/
+results/
+data/
+
+# Documentation (unless needed)
+# docs/
+
+# Local Environment Variables
+# .env
+# .env.local
+
