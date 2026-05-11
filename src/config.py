@@ -1,5 +1,5 @@
 """
-Configuración centralizada de hiperparámetros para MicroTRIBE-Gemma.
+Configuración centralizada de hiperparámetros para GemmaBE.
 
 Todos los valores de Gemma 4 están extraídos directamente del config.json oficial:
 https://huggingface.co/google/gemma-4-E2B-it/raw/main/config.json
@@ -55,7 +55,7 @@ def get_dtype(device: torch.device) -> torch.dtype:
 @dataclass
 class ModelConfig:
     """
-    Configuración completa del pipeline MicroTRIBE-Gemma.
+    Configuración completa del pipeline GemmaBE.
     
     Attributes:
         model_id: Identificador de HuggingFace del modelo Gemma 4.
@@ -63,17 +63,17 @@ class ModelConfig:
                           Extraído de text_config.hidden_size en config.json = 1536.
         bottleneck_size: Dimensión del cuello de botella antes del Subject Block.
                         Reduce de 1536 → 512 (ratio 3:1).
-        num_vertices: Número de vértices corticales en la superficie fsaverage5.
-                     TriBE v2 usa 20,484 vértices.
+        num_vertices: Número de parcelas/vértices del atlas fMRI.
+                     Algonauts 2025 usa 1,000 parcelas (Schaefer-1000).
         fmri_sampling_rate_hz: Frecuencia de muestreo de la fMRI en Hz.
-                              El TR típico del dataset Cam-CAN es ~1 segundo.
+                              El TR típico del dataset Algonauts 2025 es TR = 1.49s.
         hrf_delay_seconds: Retraso hemodinámico (HRF) en segundos.
                           La sangre tarda ~5s en reflejar la actividad neuronal.
         extraction_layer: Índice de la capa de hidden states a extraer.
                          -1 = última capa (default). Gemma 4 E2B tiene 35 capas.
         max_audio_seconds: Límite máximo de audio por ventana (limitación de Gemma 4).
         freeze_backbone: Si True, congela todos los parámetros de Gemma 4.
-        
+
     Valores de referencia del config.json de Gemma 4 E2B:
         - text_config.hidden_size: 1536
         - text_config.num_hidden_layers: 35
@@ -92,7 +92,7 @@ class ModelConfig:
     freeze_backbone: bool = True
     
     # --- Temporal ---
-    fmri_sampling_rate_hz: float = 1.0
+    fmri_sampling_rate_hz: float = 0.671  # 1/1.49 Hz (Algonauts 2025 TR=1.49s)
     hrf_delay_seconds: float = 5.0
     max_audio_seconds: float = 30.0
     

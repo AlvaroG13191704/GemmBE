@@ -31,36 +31,19 @@ class TemporalPooling(nn.Module):
        Equivalente al paso C del main.py original.
        Forma: (B, SeqLen, D) → (B, D)
     
-    2. 'conv1d': Convolución 1D que aprende a comprimir la secuencia.
-       Más expresivo que el promedio, puede aprender a ponderar tokens relevantes.
-       Forma: (B, SeqLen, D) → (B, D)
-    
     Args:
         hidden_size: Dimensión del hidden state (1536 para Gemma 4 E2B).
-        mode: 'mean' o 'conv1d'.
         dtype: Tipo de dato numérico (float16, bfloat16, float32).
     """
     
     def __init__(
         self,
         hidden_size: int = 1536,
-        mode: str = "mean",
         dtype: torch.dtype = torch.float32,
     ):
         super().__init__()
-        self.mode = mode
         self.hidden_size = hidden_size
-        
-        if mode == "conv1d":
-            # Conv1D con kernel_size=1 actúa como un "weighted pooling" aprendido.
-            # Reduce la dimensión temporal a 1 usando AdaptiveAvgPool después.
-            self.conv = nn.Sequential(
-                # (B, D, SeqLen) → (B, D, SeqLen)
-                nn.Conv1d(hidden_size, hidden_size, kernel_size=3, padding=1, dtype=dtype),
-                nn.GELU(),
-                # Colapsa cualquier longitud de secuencia a 1
-                nn.AdaptiveAvgPool1d(1),
-            )
+    
     
     def forward(self, hidden_states: torch.Tensor, attention_mask: torch.Tensor = None) -> torch.Tensor:
         """
@@ -71,24 +54,14 @@ class TemporalPooling(nn.Module):
         Returns:
             pooled: (Batch, HiddenSize) — un vector por muestra del batch.
         """
-        if self.mode == "mean":
-            if attention_mask is not None:
-                # Enmascarar tokens de padding antes del promedio
-                mask = attention_mask.unsqueeze(-1).to(hidden_states.dtype)  # (B, S, 1)
-                summed = (hidden_states * mask).sum(dim=1)                   # (B, D)
-                counts = mask.sum(dim=1).clamp(min=1)                        # (B, 1)
-                return summed / counts
-            else:
-                return hidden_states.mean(dim=1)
-        
-        elif self.mode == "conv1d":
-            # Conv1d espera (B, Channels, Length), así que transponemos
-            x = hidden_states.transpose(1, 2)   # (B, D, SeqLen)
-            x = self.conv(x)                     # (B, D, 1)
-            return x.squeeze(-1)                 # (B, D)
-        
+        if attention_mask is not None:
+            # Enmascarar tokens de padding antes del promedio
+            mask = attention_mask.unsqueeze(-1).to(hidden_states.dtype)  # (B, S, 1)
+            summed = (hidden_states * mask).sum(dim=1)                   # (B, D)
+            counts = mask.sum(dim=1).clamp(min=1)                        # (B, 1)
+            return summed / counts
         else:
-            raise ValueError(f"Modo no soportado: {self.mode}. Usa 'mean' o 'conv1d'.")
+            return hidden_states.mean(dim=1)
 
 
 class HRFAligner:
@@ -166,15 +139,12 @@ class HRFAligner:
         
         Args:
             stimulus_features: (T_stim, D) — features del estímulo por segundo.
-            fmri_bold: (T_fmri, V) — señal BOLD por TR, V=20484 vértices.
+            fmri_bold: (T_fmri, V) — señal BOLD por TR, V=1000 pacelas.
         
         Returns:
             (aligned_stimulus, aligned_bold): Tensores recortados y alineados.
             aligned_stimulus[i] corresponde causalmente a aligned_bold[i].
         """
-        T_stim = stimulus_features.shape[0]
-        T_fmri = fmri_bold.shape[0]
-        
         # El estímulo que causa fMRI[t] es stimulus[t - delay]
         # Entonces para fMRI[delay:], usamos stimulus[0:T_fmri-delay]
         valid_fmri = fmri_bold[self.delay_in_trs:]                    # (T_fmri - delay, V)

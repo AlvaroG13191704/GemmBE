@@ -1,7 +1,7 @@
 [project]
 name = "micro-tribe-gemma"
 version = "0.1.0"
-description = "MicroTRIBE-Gemma: Simplified TriBE v2 brain encoding using Gemma 4 E2B-it"
+description = "GemmaBE: Simplified TriBE v2 brain encoding using Gemma 4 E2B-it"
 requires-python = ">=3.11"
 dependencies = [
     "torch>=2.3.0",
@@ -13,6 +13,7 @@ dependencies = [
     "pillow>=10.0.0",
     "pandas>=2.0.0",
     "openpyxl>=3.1.0",
+    "bitsandbytes>=0.49.2",
 ]
 
 [project.optional-dependencies]
