@@ -7,7 +7,7 @@ aplica la alineación HRF (desfase hemodinámico de 5s), y retorna pares
 
 Flujo de datos:
     real_stimulus_features.pt  →  (T, 1536)  ← Features pooled de Gemma 4
-    sub-XX.pt                  →  (T, 20484) ← Señal BOLD de fMRI
+    sub-XX.pt                  →  (T, 1000) ← Señal BOLD de fMRI
     
     HRFAligner:
         feature[t-5] se empareja con bold[t]
@@ -15,7 +15,7 @@ Flujo de datos:
     
     Resultado por muestra:
         feature_i: (1536,)  — embedding de Gemma 4 del estímulo
-        bold_i:    (20484,) — actividad BOLD correspondiente
+        bold_i:    (1000,) — actividad BOLD correspondiente
 
 Uso:
     dataset = PreExtractedDataset(
@@ -27,7 +27,7 @@ Uso:
     
     for features, bold in dataloader:
         # features: (32, 1536)
-        # bold:     (32, 20484)
+        # bold:     (32, 1000)
         ...
 """
 
@@ -48,7 +48,7 @@ class PreExtractedDataset(Dataset):
     
     Args:
         features_path: Path al tensor de features (num_trs, 1536).
-        bold_path: Path al tensor de BOLD de un sujeto (num_trs, 20484).
+        bold_path: Path al tensor de BOLD de un sujeto (num_trs, 1000).
         hrf_delay: Desfase hemodinámico en segundos (default: 5.0).
         fmri_tr: Tiempo de repetición de la fMRI en segundos (default: 1.0).
         normalize_bold: Si True, normaliza la señal BOLD (z-score por vértice).
@@ -59,7 +59,7 @@ class PreExtractedDataset(Dataset):
         features_path: str,
         bold_path: str,
         hrf_delay: float = 5.0,
-        fmri_tr: float = 1.0,
+        fmri_tr: float = 1.49,
         normalize_bold: bool = True,
     ):
         # Cargar tensores desde disco
@@ -78,7 +78,7 @@ class PreExtractedDataset(Dataset):
             std = self.bold.std(dim=0, keepdim=True).clamp(min=1e-8)
             self.bold = (self.bold - mean) / std
         
-        print("  📦 Dataset cargado:")
+        print("Dataset cargado:")
         print(f"     Features: {self.features.shape}")
         print(f"     BOLD:     {self.bold.shape}")
         print(f"     Muestras: {len(self)}")
@@ -90,7 +90,7 @@ class PreExtractedDataset(Dataset):
         """
         Returns:
             feature: (1536,) — embedding pooled de Gemma 4.
-            bold:    (20484,) — señal BOLD target.
+            bold:    (1000,) — señal BOLD target.
         """
         return self.features[idx], self.bold[idx]
 
@@ -132,7 +132,7 @@ class MultiSubjectDataset(Dataset):
         for sid in subject_ids:
             bold_path = bold_dir / f"{sid}.pt"
             if not bold_path.exists():
-                print(f"  ⚠️  BOLD no encontrado para {sid}: {bold_path}")
+                print(f"BOLD no encontrado para {sid}: {bold_path}")
                 continue
             
             bold = torch.load(bold_path, weights_only=True)
@@ -152,13 +152,13 @@ class MultiSubjectDataset(Dataset):
             for t in range(aligned_feat.shape[0]):
                 self.samples.append((
                     aligned_feat[t],    # (1536,)
-                    aligned_bold[t],    # (20484,)
+                    aligned_bold[t],    # (1000,)
                     sid,                # str
                 ))
             
-            print(f"  ✅ {sid}: {aligned_feat.shape[0]} muestras cargadas")
+            print(f"  {sid}: {aligned_feat.shape[0]} muestras cargadas")
         
-        print("\n  📦 Dataset multi-sujeto:")
+        print("\n  Dataset multi-sujeto:")
         print(f"     Sujetos: {len(subject_ids)}")
         print(f"     Total muestras: {len(self.samples)}")
         print(f"     Muestras/sujeto: ~{len(self.samples) // max(len(subject_ids), 1)}")
@@ -170,7 +170,7 @@ class MultiSubjectDataset(Dataset):
         """
         Returns:
             feature: (1536,) — embedding pooled.
-            bold:    (20484,) — señal BOLD target.
+            bold:    (1000,) — señal BOLD target.
             subject_id: str — ID del sujeto.
         """
         return self.samples[idx]
@@ -208,7 +208,7 @@ def collate_multi_subject(batch):
         result.append((
             sid,
             torch.stack(feats),   # (N_sid, 1536)
-            torch.stack(bolds),   # (N_sid, 20484)
+            torch.stack(bolds),   # (N_sid, 1000)
         ))
     
     return result
