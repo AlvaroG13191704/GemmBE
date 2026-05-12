@@ -4,14 +4,9 @@ TailModel: Modelo ligero para entrenamiento offline.
 Este modelo es la "cola" del pipeline — todo lo que viene DESPUÉS de Gemma 4.
 Se usa cuando los features ya fueron pre-extraídos y guardados en disco.
 
-Comparación:
-    MicroTribeGemma (modelo completo):
-        Gemma 4 (2.3B params) → Pooling → Bottleneck → SubjectBlock
-        Requiere ~5GB VRAM, lento
-    
-    TailModel (este archivo):
-        Bottleneck → Dropout → SubjectBlock
-        Requiere ~500MB VRAM, rapidísimo 🚀
+TailModel :
+    Bottleneck → Dropout → SubjectBlock
+    Requiere ~500MB VRAM 
 
 El Temporal Pooling NO se incluye aquí porque ya se aplicó durante
 la extracción offline. Los features de entrada ya están pooled: (B, 1536).
@@ -42,8 +37,6 @@ Arquitectura:
                   │
                   ▼
     Predicción BOLD (B, num_vertices)
-
-Parámetros totales: ~122M con MNI152 (238,955 vóxeles) / ~11M con fsaverage5 (20,484)
 """
 
 import torch
@@ -81,7 +74,7 @@ class TailModel(nn.Module):
         print("║   TailModel (Entrenamiento Offline)         ║")
         print(f"║   Device: {str(device):<35s}║")
         print(f"║   Dtype:  {str(dtype):<35s}║")
-        print(f"║   Dropout: p={dropout_p:<31s}║")
+        print(f"║   Dropout: p={str(dropout_p):<31s}║")
         print("╚══════════════════════════════════════════════╝")
         
         # --- BOTTLENECK ---
@@ -92,7 +85,6 @@ class TailModel(nn.Module):
         )
         
         # --- DROPOUT (Regularización contra sobreajuste) ---
-        # Con ~122M params y ~943 muestras, el ratio datos/params es muy bajo.
         # Este Dropout actúa como el equivalente funcional del "Modality Dropout"
         # de TriBE v2: obliga al SubjectBlock a no depender de un subconjunto
         # fijo de features del bottleneck.
@@ -161,7 +153,7 @@ class TailModel(nn.Module):
         """Imprime resumen de parámetros."""
         total = sum(p.numel() for p in self.parameters())
         
-        print("\n📊 Resumen de Parámetros (TailModel):")
+        print("\nResumen de Parámetros (TailModel):")
         print(f"  Total entrenables: {total:>12,}")
         
         bn_params = sum(p.numel() for p in self.bottleneck.parameters())
@@ -176,5 +168,4 @@ class TailModel(nn.Module):
         # Estimación de VRAM
         bytes_per_param = 2 if self.config.dtype in (torch.float16, torch.bfloat16) else 4
         vram_mb = (total * bytes_per_param) / (1024 * 1024)
-        print(f"\n  💾 VRAM estimada: {vram_mb:.1f} MB")
-        print("     (vs ~5,000 MB con Gemma 4 completo)")
+        print(f"\n  VRAM estimada: {vram_mb:.1f} MB")
