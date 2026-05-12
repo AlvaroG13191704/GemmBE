@@ -3,19 +3,17 @@ Subject Block: Proyección del espacio latente al espacio cortical.
 
 Este módulo resuelve el Reto 2 del paper TriBE v2 — la Explosión de Dimensionalidad.
 
-En TriBE v2:
-    - El espacio latente concatenado era de 1,152 dimensiones.
-    - Un Subject Block (capa lineal) proyectaba a 20,484 vértices (fsaverage5).
-    - Parámetros: 1,152 x 20,484 = ~23.6M por sujeto.
+En TriBE v2 (fsaverage5, 20,484 vértices):
+    - Espacio latente: 1,152 dims → ~23.6M params por sujeto.
 
-En MicroTRIBE-Gemma (Dataset Sherlock, espacio MNI152):
-    - El hidden state de Gemma 4 es de 1,536 dimensiones.
-    - Target: 238,955 vóxeles volumétricos MNI152.
-    - Sin bottleneck: 1,536 x 238,955 = ~367M por sujeto.
-    - Con bottleneck (512): 512 x 238,955 = ~122M por sujeto.
-    
-La capa Bottleneck reduce de 1536 → 512 antes de proyectar a la corteza,
-ahorrando ~245M de parámetros por sujeto.
+En GemmaBE-v1 (Algonauts 2025, 1,000 parcelas Schaefer-1000):
+    - Hidden state de Gemma 4: 1,536 dims.
+    - Sin bottleneck: 1,536 x 1,000 = ~1.5M params por sujeto.
+    - Con bottleneck (512): 512 x 1,000 = ~513K params por sujeto.
+
+La capa Bottleneck reduce de 1536 → 512 antes de proyectar a las parcelas,
+reduciendo drásticamente los parámetros entrenables y permitiendo entrenar
+en hardware accesible (MacBook Pro).
 """
 
 import torch
@@ -75,21 +73,19 @@ class SubjectBlock(nn.Module):
     En TriBE v2 este era literalmente una sola capa linear:
         y = Wx + b
         donde W ∈ R^{num_vertices x 512}, b ∈ R^{num_vertices}
-    
+
     Configuraciones:
-        - fsaverage5 (TriBE v2):   num_vertices = 20,484   → ~10.5M params
-        - MNI152 (Sherlock):       num_vertices = 238,955  → ~122M params
-    
+        - Algonauts 2025:  num_vertices = 1,000   → ~513K params
     Args:
         input_size: Dimensión de entrada (512 = bottleneck_size).
-        num_vertices: Número de vóxeles/vértices corticales.
+        num_vertices: Número de parcelas/vértices corticales.
         dtype: Tipo de dato numérico.
     """
     
     def __init__(
         self,
         input_size: int = 512,
-        num_vertices: int = 238_955,
+        num_vertices: int = 1000,
         dtype: torch.dtype = torch.float32,
     ):
         super().__init__()
@@ -133,7 +129,7 @@ class MultiSubjectBlock(nn.Module):
         self,
         subject_ids: list[str],
         input_size: int = 512,
-        num_vertices: int = 238_955,
+        num_vertices: int = 1000,
         dtype: torch.dtype = torch.float32,
     ):
         super().__init__()
