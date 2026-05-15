@@ -96,6 +96,16 @@ class ModelConfig:
     hrf_delay_seconds: float = 5.0
     max_audio_seconds: float = 30.0
     
+    # --- Temporal Transformer ---
+    # Ventana de contexto temporal en TRs. 67 TRs × 1.49s ≈ 100 segundos.
+    window_size_trs: int = 67
+    # Número de capas y cabezas del Transformer Encoder.
+    transformer_layers: int = 8
+    transformer_heads: int = 8
+    # Dropout del Transformer (menor que el bottleneck dropout porque
+    # el Transformer tiene su propia regularización via attention).
+    transformer_dropout: float = 0.1
+    
     # --- Device (auto-detected) ---
     _device: Optional[torch.device] = field(default=None, repr=False)
     _dtype: Optional[torch.dtype] = field(default=None, repr=False)

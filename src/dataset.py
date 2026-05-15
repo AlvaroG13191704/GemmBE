@@ -212,3 +212,96 @@ def collate_multi_subject(batch):
         ))
     
     return result
+
+
+class WindowedDataset(Dataset):
+    """
+    Dataset que retorna ventanas deslizantes de TRs consecutivos.
+
+    En lugar de devolver un solo TR por muestra, devuelve una ventana
+    de W TRs contiguos, permitiendo al Temporal Transformer capturar
+    dependencias temporales entre timesteps.
+
+    La ventana deslizante avanza con un stride configurable para controlar
+    el solapamiento entre ventanas consecutivas.
+
+    Args:
+        features_path: Path al tensor de features (num_trs, 1536).
+        bold_path: Path al tensor de BOLD de un sujeto (num_trs, 1000).
+        window_size: Número de TRs por ventana (default: 67 ≈ 100s).
+        stride: Avance en TRs entre ventanas consecutivas (default: 1).
+                stride=1 → máximo solapamiento (más muestras de entrenamiento).
+                stride=window_size → sin solapamiento.
+        hrf_delay: Desfase hemodinámico en segundos (default: 5.0).
+        fmri_tr: Tiempo de repetición de la fMRI en segundos.
+        normalize_bold: Si True, normaliza la señal BOLD (z-score por vértice).
+    """
+
+    def __init__(
+        self,
+        features_path: str,
+        bold_path: str,
+        window_size: int = 67,
+        stride: int = 1,
+        hrf_delay: float = 5.0,
+        fmri_tr: float = 1.49,
+        normalize_bold: bool = True,
+    ):
+        # Cargar tensores desde disco
+        features = torch.load(features_path, weights_only=True)
+        bold = torch.load(bold_path, weights_only=True)
+
+        # Alinear temporalmente con el desfase HRF
+        aligner = HRFAligner(hrf_delay_seconds=hrf_delay, fmri_tr_seconds=fmri_tr)
+        self.features, self.bold = aligner.align_stimulus_to_fmri(features, bold)
+
+        # Normalizar BOLD (z-score por vértice, calculado GLOBALMENTE)
+        # Es crítico normalizar ANTES de crear ventanas para que las estadísticas
+        # reflejen toda la serie temporal, no solo la ventana local.
+        if normalize_bold:
+            mean = self.bold.mean(dim=0, keepdim=True)
+            std = self.bold.std(dim=0, keepdim=True).clamp(min=1e-8)
+            self.bold = (self.bold - mean) / std
+
+        self.window_size = window_size
+        self.stride = stride
+        total_trs = self.features.shape[0]
+
+        # Calcular número de ventanas válidas
+        if total_trs < window_size:
+            # Si no hay suficientes TRs, usar una sola ventana con padding
+            self.num_windows = 1
+            self._needs_padding = True
+        else:
+            self.num_windows = (total_trs - window_size) // stride + 1
+            self._needs_padding = False
+
+        print("WindowedDataset cargado:")
+        print(f"     Features: {self.features.shape}")
+        print(f"     BOLD:     {self.bold.shape}")
+        print(f"     Ventana:  {window_size} TRs ({window_size * fmri_tr:.1f}s)")
+        print(f"     Stride:   {stride} TRs")
+        print(f"     Ventanas: {self.num_windows}")
+
+    def __len__(self) -> int:
+        return self.num_windows
+
+    def __getitem__(self, idx: int) -> tuple[torch.Tensor, torch.Tensor]:
+        """
+        Returns:
+            features_window: (W, 1536) — ventana de features consecutivos.
+            bold_window:     (W, 1000) — ventana de BOLD target correspondiente.
+        """
+        if self._needs_padding:
+            # Padding con zeros si la serie es más corta que la ventana
+            T = self.features.shape[0]
+            feat_padded = torch.zeros(self.window_size, self.features.shape[1])
+            bold_padded = torch.zeros(self.window_size, self.bold.shape[1])
+            feat_padded[:T] = self.features
+            bold_padded[:T] = self.bold
+            return feat_padded, bold_padded
+
+        start = idx * self.stride
+        end = start + self.window_size
+        return self.features[start:end], self.bold[start:end]
+
