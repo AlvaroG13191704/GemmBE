@@ -36,3 +36,15 @@ for s in sub-01 sub-02 sub-03 sub-05; do
     uv run python train.py --subject $s --mode full --epochs 100 \
         --fmri_dir ./data/subjects_fmri_filtered
 done
+
+
+# 1. En RunPod/Lambda con GPU L4 (~$0.50/hora):
+git clone <tu-repo>
+cd GemmaBe
+bash cloud/setup.sh
+
+# 2. Lanzar extracción (~4-6 horas para 24 chunks)
+bash cloud/run_extraction.sh
+
+# 3. Descargar resultados
+tar czf results_v2.tar.gz data/features_v2/ data/features_v2_text_only/

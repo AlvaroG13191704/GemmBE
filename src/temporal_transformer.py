@@ -38,9 +38,6 @@ Flujo:
                      ▼
     Predicción BOLD (B, W, num_vertices)
 """
-
-import math
-
 import torch
 import torch.nn as nn
 

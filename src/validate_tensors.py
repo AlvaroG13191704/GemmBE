@@ -11,8 +11,6 @@ Uso:
 
 import argparse
 import torch
-import numpy as np
-
 
 def validate_tensor(path: str, name: str) -> dict:
     """Valida un tensor individual y retorna un reporte."""
@@ -94,7 +92,7 @@ def validate_synchronization(
     features_path: str,
     bold_path: str,
     hrf_delay: float = 5.0,
-    fmri_tr: float = 1.5,
+    fmri_tr: float = 1.49,
 ):
     """Valida que los tensores estén sincronizados y listos para entrenar."""
     
@@ -168,7 +166,7 @@ if __name__ == "__main__":
     parser.add_argument("--features", type=str, default="data/features/real_stimulus_features.pt")
     parser.add_argument("--bold", type=str, default="data/features/fmri/sub-01.pt")
     parser.add_argument("--hrf_delay", type=float, default=5.0)
-    parser.add_argument("--fmri_tr", type=float, default=1.5)
+    parser.add_argument("--fmri_tr", type=float, default=1.49, help="Tiempo de repetición (TR) del escáner en segs")
     
     args = parser.parse_args()
     
