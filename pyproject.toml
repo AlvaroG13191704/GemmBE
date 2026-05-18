@@ -14,6 +14,9 @@ dependencies = [
     "pandas>=2.0.0",
     "openpyxl>=3.1.0",
     "bitsandbytes>=0.49.2",
+    "lightning>=2.4.0",
+    "scikit-learn>=1.5.0",
+    "tensorboard>=2.17.0",
 ]
 
 [project.optional-dependencies]

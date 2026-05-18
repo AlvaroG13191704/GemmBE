@@ -3,14 +3,17 @@ Filtra datos fMRI de Algonauts 2025 para incluir SOLO los chunks
 que fueron procesados por el extractor de estímulos.
 
 Uso:
-    # Filtrar todos los sujetos usando el tracker por defecto
-    uv run python src/filter_fmri.py --all_subjects
+    # Filtrar sub-01 y sub-02 (default)
+    python src/filter_fmri.py
+
+    # Filtrar sujetos específicos
+    python src/filter_fmri.py --subjects sub-01 sub-02 sub-03
 
     # Filtrar solo un sujeto
-    uv run python src/filter_fmri.py --subject_id sub-01
+    python src/filter_fmri.py --subject_id sub-01
 
     # Especificar tracker y output manualmente
-    uv run python src/filter_fmri.py --all_subjects \
+    python src/filter_fmri.py \
         --tracker ./data/features/processed_chunks.json \
         --output_dir ./data/subjects_fmri_filtered
 
@@ -27,13 +30,24 @@ from pathlib import Path
 import h5py
 import numpy as np
 import torch
-
-from src.prepare_fmri import (
-    ALGONAUTS_SUBJECTS,
+# pyrefly: ignore [missing-import]
+from src.utils.prepare_fmri import (
     NUM_PARCELS,
     get_fmri_paths,
 )
-from src.extract_features import get_chunks_info
+# pyrefly: ignore [missing-import]
+from src.extract_features_v2 import get_chunks_info
+
+
+def _task_from_key(key: str) -> str:
+    """Extrae el nombre de tarea de una key HDF5.
+
+    Las keys tienen forma 'ses-NNN_task-XXXX'. El número de sesión es
+    específico del sujeto, pero el nombre de tarea es compartido.
+    Ejemplo: 'ses-001_task-s01e02a' -> 'task-s01e02a'.
+    """
+    parts = key.split("_", 1)
+    return parts[1] if len(parts) > 1 else key
 
 
 def filter_fmri_for_subject(
@@ -49,6 +63,10 @@ def filter_fmri_for_subject(
     Para garantizar sincronización perfecta con los features de estímulo,
     trunca cada chunk de fMRI al número EXACTO de TRs del tensor de estímulo
     correspondiente (leído desde chunk_{idx:03d}.pt).
+
+    NOTA: El número de sesión (ses-NNN) en las keys HDF5 es específico de cada
+    sujeto. Por eso se empareja por nombre de tarea (task-XXXX), no por key
+    completa.
 
     Args:
         algonauts_dir: Directorio raíz de Algonauts 2025.
@@ -70,56 +88,71 @@ def filter_fmri_for_subject(
     # Obtener la lista de keys en el MISMO orden que get_chunks_info
     all_chunks_info = get_chunks_info(str(algonauts_dir))
 
-    # Cargar HDF5 del sujeto
+    # Cargar HDF5 del sujeto y construir mapa: task_name -> (full_key, h5_path)
     paths = get_fmri_paths(algonauts_dir, subject_id)
-    all_filtered_data = []
-    total_trs_extracted = 0
+    task_to_source: dict[str, tuple[str, Path]] = {}
 
     for task_name, h5_path in paths.items():
         if not h5_path.exists():
             print(f"  {task_name}: Archivo no encontrado, saltando.")
             continue
-
-        with h5py.File(h5_path, 'r') as f:
-            for idx in sorted(processed_indices):
-                if idx >= len(all_chunks_info):
+        with h5py.File(h5_path, "r") as f:
+            for key in f.keys():
+                task = _task_from_key(key)
+                if task in task_to_source:
+                    print(f"    ADVERTENCIA: tarea duplicada '{task}' en {task_name}, usando primera ocurrencia.")
                     continue
-                key = all_chunks_info[idx]["key"]
-                if key not in f:
-                    continue
+                task_to_source[task] = (key, h5_path)
 
-                # Cargar el tensor de estímulo para saber cuántos TRs realmente tiene
-                stimulus_path = chunks_dir / f"chunk_{idx:03d}.pt"
-                if not stimulus_path.exists():
-                    print(f"    chunk_{idx:03d}.pt no encontrado, saltando.")
-                    continue
-                stimulus_tensor = torch.load(stimulus_path, weights_only=True)
-                num_trs_stimulus = stimulus_tensor.shape[0]
+    all_filtered_data = []
+    total_trs_extracted = 0
 
-                # Extraer fMRI y truncar exactamente al número de TRs del estímulo
-                chunk_data = f[key][:].astype(np.float32)
-                if chunk_data.ndim == 1:
-                    chunk_data = chunk_data.reshape(1, -1)
-                if chunk_data.shape[1] != NUM_PARCELS:
-                    if chunk_data.shape[0] == NUM_PARCELS:
-                        chunk_data = chunk_data.T
-                    else:
-                        print(f"  Key '{key}' forma inesperada {chunk_data.shape}, saltando.")
-                        continue
+    for idx in sorted(processed_indices):
+        if idx >= len(all_chunks_info):
+            continue
 
-                # TRUNCAR al número de TRs del estímulo (garantiza sincronización)
-                if chunk_data.shape[0] > num_trs_stimulus:
-                    chunk_data = chunk_data[:num_trs_stimulus]
-                    truncation_msg = f" (truncado de {f[key].shape[0]} a {num_trs_stimulus})"
-                elif chunk_data.shape[0] < num_trs_stimulus:
-                    # Esto no debería pasar, pero lo reportamos
-                    truncation_msg = f"  fMRI más corto que estímulo! ({chunk_data.shape[0]} < {num_trs_stimulus})"
-                else:
-                    truncation_msg = ""
+        stimulus_key = all_chunks_info[idx]["key"]
+        stimulus_task = _task_from_key(stimulus_key)
 
-                all_filtered_data.append(chunk_data)
-                total_trs_extracted += chunk_data.shape[0]
-                print(f"   {key}: {chunk_data.shape[0]} TRs{truncation_msg}")
+        if stimulus_task not in task_to_source:
+            print(f"   {stimulus_key}: Tarea '{stimulus_task}' no encontrada en fMRI, saltando.")
+            continue
+
+        fmri_key, h5_path = task_to_source[stimulus_task]
+
+        # Cargar el tensor de estímulo para saber cuántos TRs realmente tiene
+        stimulus_path = chunks_dir / f"chunk_{idx:03d}.pt"
+        if not stimulus_path.exists():
+            print(f"    chunk_{idx:03d}.pt no encontrado, saltando.")
+            continue
+        stimulus_tensor = torch.load(stimulus_path, weights_only=True)
+        num_trs_stimulus = stimulus_tensor.shape[0]
+
+        # Extraer fMRI y truncar exactamente al número de TRs del estímulo
+        with h5py.File(h5_path, "r") as f:
+            chunk_data = f[fmri_key][:].astype(np.float32)
+
+        if chunk_data.ndim == 1:
+            chunk_data = chunk_data.reshape(1, -1)
+        if chunk_data.shape[1] != NUM_PARCELS:
+            if chunk_data.shape[0] == NUM_PARCELS:
+                chunk_data = chunk_data.T
+            else:
+                print(f"  Key '{stimulus_key}' forma inesperada {chunk_data.shape}, saltando.")
+                continue
+
+        # TRUNCAR al número de TRs del estímulo (garantiza sincronización)
+        if chunk_data.shape[0] > num_trs_stimulus:
+            chunk_data = chunk_data[:num_trs_stimulus]
+            truncation_msg = f" (truncado de {chunk_data.shape[0] + 1} a {num_trs_stimulus})"
+        elif chunk_data.shape[0] < num_trs_stimulus:
+            truncation_msg = f"  ADVERTENCIA: fMRI más corto ({chunk_data.shape[0]} < {num_trs_stimulus})"
+        else:
+            truncation_msg = ""
+
+        all_filtered_data.append(chunk_data)
+        total_trs_extracted += chunk_data.shape[0]
+        print(f"   {stimulus_key} -> {fmri_key}: {chunk_data.shape[0]} TRs{truncation_msg}")
 
     if not all_filtered_data:
         print(f" No se encontraron datos para {subject_id}")
@@ -174,9 +207,10 @@ def main():
         help="ID del sujeto a filtrar. Si no se especifica, usa --all_subjects.",
     )
     parser.add_argument(
-        "--all_subjects",
-        action="store_true",
-        help="Filtrar todos los sujetos.",
+        "--subjects",
+        nargs="+",
+        default=["sub-01", "sub-02"],
+        help="IDs de sujeto a filtrar (default: sub-01 sub-02).",
     )
 
     args = parser.parse_args()
@@ -195,17 +229,13 @@ def main():
 
     processed_count = tracker["processed_count"]
     total_count = tracker["total_chunks"]
-    print(f"📋 Tracker cargado: {processed_count}/{total_count} chunks procesados")
+    print(f"Tracker cargado: {processed_count}/{total_count} chunks procesados")
 
     if processed_count == 0:
         print(" No hay chunks procesados en el tracker.")
         return
 
-    subjects = [args.subject_id] if args.subject_id else ALGONAUTS_SUBJECTS
-
-    if not args.all_subjects and not args.subject_id:
-        print("Error: Especifica --subject_id o --all_subjects.")
-        return
+    subjects = [args.subject_id] if args.subject_id else args.subjects
 
     for sid in subjects:
         try:

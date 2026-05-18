@@ -6,7 +6,7 @@ verificando que no haya NaN, Inf, filas vacías, ni desajustes dimensionales.
 
 Uso:
     uv run python src/validate_tensors.py
-    uv run python src/validate_tensors.py --features data/features/real_stimulus_features.pt --bold data/features/fmri/sub-01.pt
+    uv run python src/validate_tensors.py --features data/features_v2/real_stimulus_features.pt --bold data/features_v2/fmri/sub-01.pt
 """
 
 import argparse
@@ -163,8 +163,8 @@ def validate_synchronization(
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Validador de tensores pre-entrenamiento")
-    parser.add_argument("--features", type=str, default="data/features/real_stimulus_features.pt")
-    parser.add_argument("--bold", type=str, default="data/features/fmri/sub-01.pt")
+    parser.add_argument("--features", type=str, default="data/features_v2/real_stimulus_features.pt")
+    parser.add_argument("--bold", type=str, default="data/features_v2/fmri/sub-01.pt")
     parser.add_argument("--hrf_delay", type=float, default=5.0)
     parser.add_argument("--fmri_tr", type=float, default=1.49, help="Tiempo de repetición (TR) del escáner en segs")
     
