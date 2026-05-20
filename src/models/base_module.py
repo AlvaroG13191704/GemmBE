@@ -18,7 +18,7 @@ class BrainEncodingModule(L.LightningModule):
     LightningModule base para todos los modelos de brain encoding.
 
     Args:
-        model_name: Nombre del modelo (temporal_full, without_temporal_full, no_hrf, ridge).
+        model_name: Nombre del modelo (temporal_full, without_temporal_full).
         stimulus_type: "multimodal" o "textonly".
         subject_id: ID del sujeto (ej: "sub-01").
         num_vertices: Número de parcelas (1000).

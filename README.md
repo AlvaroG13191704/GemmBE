@@ -24,8 +24,7 @@ GemmaBe/
 │   ├── models/                   # LightningModules
 │   │   ├── base_module.py        # Lógica compartida (train/val/test steps)
 │   │   ├── temporal_full_model.py         # Full con Transformer temporal
-│   │   ├── without_temporal_full_model.py # Full pointwise (sin Transformer)
-│   │   └── ridge_model.py                 # Ridge Regression baseline
+│   │   └── without_temporal_full_model.py # Full pointwise (sin Transformer)
 │   ├── datamodules/              # LightningDataModules
 │   │   ├── algonauts_datamodule.py        # Datos pointwise (TR independiente)
 │   │   └── temporal_algonauts_datamodule.py # Ventanas de TRs
@@ -73,14 +72,14 @@ nohup bash cloud/run_extraction.sh > extraction_v2.log 2>&1 &
 ```
 
 Esto genera:
-- `data/features_v2/` — features multimodales narrativos (33 chunks)
-- `data/features_v2_text_only/` — baseline solo texto (33 chunks)
+- `data/features/` — features multimodales narrativos
+- `data/features_text_only/` — baseline solo texto
 
 ### Paso 2: Descargar resultados a tu Mac
 
 ```bash
-rsync -avz --progress root@RUNPOD_IP:/workspace/GemmaBe/data/features_v2/ ./data/features_v2/
-rsync -avz --progress root@RUNPOD_IP:/workspace/GemmaBe/data/features_v2_text_only/ ./data/features_v2_text_only/
+rsync -avz --progress root@RUNPOD_IP:/workspace/GemmaBe/data/features/ ./data/features/
+rsync -avz --progress root@RUNPOD_IP:/workspace/GemmaBe/data/features_text_only/ ./data/features_text_only/
 ```
 
 ### Paso 3: Filtrar fMRI para sincronizar con chunks procesados
@@ -96,7 +95,7 @@ python src/filter_fmri.py --subjects sub-01 sub-02
 Esto genera:
 - `data/subjects_fmri_filtered/sub-01.pt`
 - `data/subjects_fmri_filtered/sub-02.pt`
-- Solo incluye los TRs de los 33 chunks extraídos.
+- Solo incluye los TRs de los chunks extraídos.
 
 ### Paso 4: Entrenar
 
@@ -108,7 +107,7 @@ python train.py
 
 ## Entrenamiento
 
-### Grid para el paper (14 combinaciones)
+### Grid para el paper (8 combinaciones)
 
 ```bash
 python train.py
@@ -118,18 +117,18 @@ python train.py
 |--------|-----------|---------|------|----------|
 | `temporal_full` | multimodal, textonly | sub-01, sub-02 | 4 | **Modelo principal**: Bottleneck + Transformer temporal |
 | `without_temporal_full` | multimodal, textonly | sub-01, sub-02 | 4 | **Efecto del Transformer**: pointwise vs temporal |
-| `no_hrf` | **multimodal** | sub-01, sub-02 | 2 | **Importancia del delay HRF**: sin alineación hemodinámica |
-| `ridge` | multimodal, textonly | sub-01, sub-02 | 4 | **Baseline lineal**: Ridge Regression (sklearn) |
-| **Total** | | | **14** | |
+| **Total** | | | **8** | |
 
 ### Comparaciones clave del paper
 
 | Comparación | Modelos | Pregunta |
 |---|---|---|
 | **Transformer vs Pointwise** | `temporal_full` vs `without_temporal_full` (mismo estímulo, mismo sujeto) | ¿Cuánto mejora el Transformer temporal? |
-| **HRF alignment** | `without_temporal_full` vs `no_hrf` (ambos multimodal) | ¿Qué aporta alinear con el delay hemodinámico? |
 | **Multimodal vs Text-only** | Cualquier modelo: multimodal vs textonly (mismo sujeto) | ¿Qué aporta la información visual/auditiva? |
-| **Deep vs Linear** | `without_temporal_full` vs `ridge` (mismo estímulo) | ¿Cuánto gana la red profunda sobre Ridge? |
+
+### Ablation adicional (no_hrf)
+
+Se entrenó un modelo `no_hrf` (misma arquitectura temporal pero sin alineación hemodinámica) como ablation exploratoria. Los resultados mostraron que el Transformer es robusto a desalineaciones moderadas, aprendiendo a compensar el desfase hemodinámico dentro de su ventana receptiva de ~100 segundos.
 
 ### Comandos útiles
 
@@ -153,10 +152,10 @@ python train.py --epochs 200 --batch_size 128 --lr 5e-5
 
 | Modelo | Descripción | Estímulos |
 |--------|-------------|-----------|
-| `temporal_full` | Bottleneck(1536→512) + Transformer temporal(8 capas) + SubjectBlock | both |
-| `without_temporal_full` | Bottleneck(1536→512) + SubjectBlock (sin Transformer) | both |
-| `no_hrf` | Sin delay hemodinámico (HRF=0s). Mismo arquitectura que without_temporal. | multimodal only |
-| `ridge` | Ridge Regression (sklearn) como baseline lineal | both |
+| `temporal_full` | Bottleneck(1536→512) + Transformer temporal(8 capas) + Head(512→1000) | both |
+| `without_temporal_full` | Bottleneck(1536→512) + MLP pointwise(2 capas) + Head(512→1000) | both |
+
+**Nota arquitectónica**: La ablation `without_temporal` mantiene la misma capacidad expresiva (~1.8M parámetros) que `temporal_full` (~26.6M), pero sin mecanismo de atención temporal. Esto aísla el efecto del Transformer vs un MLP pointwise comparable.
 
 ---
 

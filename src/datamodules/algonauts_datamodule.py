@@ -73,7 +73,7 @@ class AlgonautsDataModule(L.LightningDataModule):
             generator=torch.Generator().manual_seed(42),
         )
 
-        print(f"📊 DataModule: train={train_size}, val={val_size}, total_features={features.shape}")
+        print(f"DataModule: train={train_size}, val={val_size}, total_features={features.shape}")
 
     def train_dataloader(self):
         return DataLoader(
