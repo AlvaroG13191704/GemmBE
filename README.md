@@ -7,7 +7,9 @@
 Este proyecto implementa un pipeline de **brain encoding** que predice la actividad cerebral (fMRI) a partir de estímulos multimodales (video, audio, texto). La arquitectura se basa en:
 
 - **Encoder congelado**: Gemma 4 E2B-it (5.1B parámetros) extrae embeddings de 1536 dimensiones por TR.
-- **TailModel ligero**: Entrenable, mapea 1536D → 1000 parcelas de fMRI.
+- **Bottleneck**: Reducción de dimensionalidad de 1536D → 512D.
+- **Transformer Temporal**: Captura dependencias temporales en los TRs, con 8 cabezas de atención y 8 capas.
+- **TailModel**: Entrenable, mapea 512D → 1000 parcelas de fMRI.
 - **PyTorch Lightning**: Todo el entrenamiento es escalable, con logging automático y checkpoints.
 
 El objetivo es demostrar la viabilidad de Gemma 4 para brain encoding en el dataset Algonauts 2025 (pilot subset).
