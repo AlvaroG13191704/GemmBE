@@ -14,6 +14,8 @@ Este proyecto implementa un pipeline de **brain encoding** que predice la activi
 
 El objetivo es demostrar la viabilidad de Gemma 4 para brain encoding en el dataset Algonauts 2025 (pilot subset).
 
+> **Nota sobre comparación con modelos especializados**: Nuestro modelo alcanza ~0.80 de correlación de Pearson promedio en 1000 parcelas, acercándose al rendimiento de modelos especializados de brain encoding (TriBE v1: 0.75-0.85 en parcelas selectivas). Esto sugiere que los LLMs multimodales generalistas son una dirección viable para brain encoding, sin requerir entrenamiento específico de dominio.
+
 ---
 
 ## Estructura del proyecto
@@ -178,6 +180,23 @@ results/
 ├── temporal_full_textonly_sub-01/
 │   └── ...
 ```
+
+### Figuras para el paper
+
+```bash
+# Generar todas las figuras
+uv run python src/utils/generate_figures.py
+
+# Generar figura específica
+uv run python src/utils/generate_figures.py --figure 2
+uv run python src/utils/generate_figures.py --figure 3 --subject sub-01
+uv run python src/utils/generate_figures.py --figure 4
+```
+
+**Figuras generadas** (`plots/`):
+- `figure_2_bars.{png,pdf}` — Barras comparativas de Pearson por modelo y estímulo
+- `figure_3_brain_maps_sub-01.{png,pdf}` — Mapas de superficie cortical (Schaefer-1000) para estímulo multimodal
+- `figure_4_training_curves.{png,pdf}` — Curvas de entrenamiento (loss + Pearson)
 
 ### Visualizar logs
 
