@@ -1,7 +1,5 @@
 # GemmaBe — Brain Encoding con Gemma 4
 
-> **MicroTRIBE-Gemma**: Simplificación de TriBE v2 usando Gemma 4 E2B-it como encoder multimodal congelado para Algonauts 2025.
-
 ---
 
 ## ¿Qué es esto?
