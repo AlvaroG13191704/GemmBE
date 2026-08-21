@@ -44,11 +44,11 @@ class WithoutTemporalFullModel(BrainEncodingModule):
             nn.Linear(hidden, hidden),
             nn.LayerNorm(hidden),
             nn.GELU(),
-            nn.Dropout(0.1),
+            nn.Dropout(0.2),
             nn.Linear(hidden, hidden),
             nn.LayerNorm(hidden),
             nn.GELU(),
-            nn.Dropout(0.1),
+            nn.Dropout(0.2),
         )
 
         # Head (identico al temporal)

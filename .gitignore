@@ -43,4 +43,5 @@ data/
 # Local Environment Variables
 # .env
 # .env.local
-
+algonauts_2025/*
+.atl

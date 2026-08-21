@@ -34,7 +34,7 @@ class BrainEncodingModule(L.LightningModule):
         subject_id: str,
         num_vertices: int = 1000,
         lr: float = 1e-4,
-        weight_decay: float = 1e-5,
+        weight_decay: float = 1e-3,
         max_epochs: int = 100,
     ):
         super().__init__()

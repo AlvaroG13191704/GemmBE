@@ -95,11 +95,15 @@ class TemporalAlgonautsDataModule(L.LightningDataModule):
         val_size = int(total * self.hparams.val_split)
         train_size = total - val_size
 
-        self.train_dataset, self.val_dataset = torch.utils.data.random_split(
-            full_dataset,
-            [train_size, val_size],
-            generator=torch.Generator().manual_seed(42),
-        )
+        if val_size > 0:
+            self.train_dataset, self.val_dataset = torch.utils.data.random_split(
+                full_dataset,
+                [train_size, val_size],
+                generator=torch.Generator().manual_seed(42),
+            )
+        else:
+            self.train_dataset = full_dataset
+            self.val_dataset = full_dataset
 
         # Memoria estimada: solo tensores base
         feat_mb = features.numel() * features.element_size() / (1024 ** 2)

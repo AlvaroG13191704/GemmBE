@@ -67,11 +67,15 @@ class AlgonautsDataModule(L.LightningDataModule):
         val_size = int(total * self.hparams.val_split)
         train_size = total - val_size
 
-        self.train_dataset, self.val_dataset = random_split(
-            dataset,
-            [train_size, val_size],
-            generator=torch.Generator().manual_seed(42),
-        )
+        if val_size > 0:
+            self.train_dataset, self.val_dataset = random_split(
+                dataset,
+                [train_size, val_size],
+                generator=torch.Generator().manual_seed(42),
+            )
+        else:
+            self.train_dataset = dataset
+            self.val_dataset = dataset  # Reuse for test_dataloader
 
         print(f"DataModule: train={train_size}, val={val_size}, total_features={features.shape}")
 

@@ -64,7 +64,7 @@ class TemporalTransformerEncoder(nn.Module):
         nhead: int = 8,
         num_layers: int = 8,
         max_window: int = 128,
-        dropout: float = 0.1,
+        dropout: float = 0.2,
         num_subjects: int = 0,
     ):
         super().__init__()

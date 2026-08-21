@@ -20,9 +20,9 @@ class TemporalFullModel(BrainEncodingModule):
     def __init__(
         self,
         window_size: int = 67,
-        transformer_layers: int = 8,
+        transformer_layers: int = 4,
         transformer_heads: int = 8,
-        transformer_dropout: float = 0.1,
+        transformer_dropout: float = 0.2,
         **kwargs,
     ):
         super().__init__(model_name="full_transformer", **kwargs)
@@ -42,7 +42,7 @@ class TemporalFullModel(BrainEncodingModule):
             dropout=transformer_dropout,
             num_subjects=0,
         )
-        self.dropout = nn.Dropout(0.1)
+        self.dropout = nn.Dropout(0.2)
         self.head = nn.Linear(self.config.bottleneck_size, self.hparams.num_vertices)
 
     def forward(self, features: torch.Tensor) -> torch.Tensor:
