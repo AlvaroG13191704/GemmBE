@@ -186,23 +186,43 @@ def run_experiment(
             "conformer_path": str(split_path / "conformer_train.pt"),
             "text_path": str(split_path / "text_train.pt"),
             "bold_path": str(split_path / f"bold_train_{subject_id}.pt"),
+            "val_vit_path": str(split_path / "vit_val.pt") if (split_path / "vit_val.pt").exists() else None,
+            "val_conformer_path": str(split_path / "conformer_val.pt") if (split_path / "conformer_val.pt").exists() else None,
+            "val_text_path": str(split_path / "text_val.pt") if (split_path / "text_val.pt").exists() else None,
+            "val_bold_path": str(split_path / f"bold_val_{subject_id}.pt") if (split_path / f"bold_val_{subject_id}.pt").exists() else None,
+            "test_vit_path": str(split_path / "vit_test.pt"),
+            "test_conformer_path": str(split_path / "conformer_test.pt"),
+            "test_text_path": str(split_path / "text_test.pt"),
+            "test_bold_path": str(split_path / f"bold_test_{subject_id}.pt"),
             "window_size": 67,
             "stride": stride,
             "hrf_delay": cfg["hrf"],
             "fmri_tr": 1.49,
-            "val_split": 0.1,
             "batch_size": batch_size // 4,
             "normalize_bold": False,   # Ya normalizado en split
             "normalize_feats": True,
         }
     else:
-        features_train = split_path / "features_train.pt"
+        prefix = "features_textonly" if stimulus_key == "textonly" else "features"
+        feat_train = split_path / f"{prefix}_train.pt"
+        feat_val = split_path / f"{prefix}_val.pt"
+        feat_test = split_path / f"{prefix}_test.pt"
+
+        # Fallback si solo existen nombres genéricos
+        if not feat_train.exists():
+            feat_train = split_path / "features_train.pt"
+            feat_val = split_path / "features_val.pt" if (split_path / "features_val.pt").exists() else None
+            feat_test = split_path / "features_test.pt"
+
         dm_kwargs = {
-            "features_path": str(features_train),
+            "features_path": str(feat_train),
             "bold_path": str(split_path / f"bold_train_{subject_id}.pt"),
+            "val_features_path": str(feat_val) if feat_val and feat_val.exists() else None,
+            "val_bold_path": str(split_path / f"bold_val_{subject_id}.pt") if (split_path / f"bold_val_{subject_id}.pt").exists() else None,
+            "test_features_path": str(feat_test) if feat_test and feat_test.exists() else None,
+            "test_bold_path": str(split_path / f"bold_test_{subject_id}.pt"),
             "hrf_delay": cfg["hrf"],
             "fmri_tr": 1.49,
-            "val_split": 0.1,
             "batch_size": batch_size if not cfg["temporal"] else batch_size // 4,
             "normalize_bold": False,  # Ya normalizado en split
         }
@@ -294,9 +314,13 @@ def run_experiment(
             "normalize_feats": True,
         }
     else:
-        features_test = split_path / "features_test.pt"
+        prefix = "features_textonly" if stimulus_key == "textonly" else "features"
+        feat_test = split_path / f"{prefix}_test.pt"
+        if not feat_test.exists():
+            feat_test = split_path / "features_test.pt"
+
         test_dm_kwargs = {
-            "features_path": str(features_test),
+            "features_path": str(feat_test),
             "bold_path": str(split_path / f"bold_test_{subject_id}.pt"),
             "hrf_delay": cfg["hrf"],
             "fmri_tr": 1.49,

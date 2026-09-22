@@ -1,13 +1,10 @@
 """
-TemporalAlgonautsDataModule — DataModule con ventanas deslizantes.
+TemporalAlgonautsDataModule — DataModule con ventanas deslizantes y soporte de split episódico limpio.
 
 Para modelos con Temporal Transformer. Cada muestra es una ventana
-de W TRs consecutivos.
-
-OPTIMIZACION DE MEMORIA: en lugar de materializar todas las ventanas
-en RAM (83+ GB), se construyen on-the-fly en __getitem__. Esto reduce
-el uso de memoria a ~1 GB (solo los tensores base alineados).
+de W TRs consecutivos construida on-the-fly (baja memoria, ~1 GB).
 """
+from pathlib import Path
 import torch
 from torch.utils.data import DataLoader, Dataset
 import lightning as L
@@ -28,7 +25,7 @@ class _SlidingWindowDataset(Dataset):
         self.bold = bold
         self.window_size = window_size
         self.stride = stride
-        self.num_windows = (features.shape[0] - window_size) // stride + 1
+        self.num_windows = max(0, (features.shape[0] - window_size) // stride + 1)
 
     def __len__(self) -> int:
         return self.num_windows
@@ -41,16 +38,20 @@ class _SlidingWindowDataset(Dataset):
 
 class TemporalAlgonautsDataModule(L.LightningDataModule):
     """
-    DataModule temporal para un unico sujeto.
+    DataModule temporal para un único sujeto con soporte de split episódico.
 
     Args:
-        features_path: Path a real_stimulus_features.pt.
-        bold_path: Path a sub-XX.pt.
-        window_size: TRs por ventana (default 67 ~ 100s).
-        stride: Avance entre ventanas (default 1 = maximo solapamiento).
+        features_path: Path a features de train.
+        bold_path: Path a BOLD de train.
+        val_features_path: Path a features de val (opcional, Season 5).
+        val_bold_path: Path a BOLD de val (opcional, Season 5).
+        test_features_path: Path a features de test (opcional, Season 6).
+        test_bold_path: Path a BOLD de test (opcional, Season 6).
+        window_size: TRs por ventana (default 67 ≈ 100s).
+        stride: Avance entre ventanas (default 5).
         hrf_delay: Retraso HRF en segundos.
         fmri_tr: TR en segundos.
-        val_split: Fraccion para validacion.
+        val_split: Fracción para validación aleatoria si no se pasa val_features_path.
         batch_size: Batch size.
         normalize_bold: Si True, z-score por parcela.
     """
@@ -59,20 +60,24 @@ class TemporalAlgonautsDataModule(L.LightningDataModule):
         self,
         features_path: str,
         bold_path: str,
+        val_features_path: str = None,
+        val_bold_path: str = None,
+        test_features_path: str = None,
+        test_bold_path: str = None,
         window_size: int = 67,
         stride: int = 5,
         hrf_delay: float = 5.0,
         fmri_tr: float = 1.49,
-        val_split: float = 0.1,
+        val_split: float = 0.0,
         batch_size: int = 16,
-        normalize_bold: bool = True,
+        normalize_bold: bool = False,
     ):
         super().__init__()
         self.save_hyperparameters()
 
-    def setup(self, stage: str = None):
-        features = torch.load(self.hparams.features_path, weights_only=True)
-        bold = torch.load(self.hparams.bold_path, weights_only=True)
+    def _prepare_dataset(self, feat_path: str, bold_path: str) -> _SlidingWindowDataset:
+        features = torch.load(feat_path, weights_only=True)
+        bold = torch.load(bold_path, weights_only=True)
 
         aligner = HRFAligner(
             hrf_delay_seconds=self.hparams.hrf_delay,
@@ -85,32 +90,43 @@ class TemporalAlgonautsDataModule(L.LightningDataModule):
             std = bold.std(dim=0, keepdim=True).clamp(min=1e-8)
             bold = (bold - mean) / std
 
-        # Dataset con ventanas on-the-fly (baja memoria)
-        full_dataset = _SlidingWindowDataset(
+        return _SlidingWindowDataset(
             features, bold,
             window_size=self.hparams.window_size,
             stride=self.hparams.stride,
         )
-        total = len(full_dataset)
-        val_size = int(total * self.hparams.val_split)
-        train_size = total - val_size
 
-        if val_size > 0:
+    def setup(self, stage: str = None):
+        # 1. Dataset de Train
+        train_ds = self._prepare_dataset(self.hparams.features_path, self.hparams.bold_path)
+
+        # 2. Dataset de Validación
+        if self.hparams.val_features_path and self.hparams.val_bold_path:
+            val_ds = self._prepare_dataset(self.hparams.val_features_path, self.hparams.val_bold_path)
+            self.train_dataset = train_ds
+            self.val_dataset = val_ds
+        elif self.hparams.val_split > 0:
+            total = len(train_ds)
+            val_size = int(total * self.hparams.val_split)
+            train_size = total - val_size
             self.train_dataset, self.val_dataset = torch.utils.data.random_split(
-                full_dataset,
+                train_ds,
                 [train_size, val_size],
                 generator=torch.Generator().manual_seed(42),
             )
         else:
-            self.train_dataset = full_dataset
-            self.val_dataset = full_dataset
+            self.train_dataset = train_ds
+            self.val_dataset = train_ds
 
-        # Memoria estimada: solo tensores base
-        feat_mb = features.numel() * features.element_size() / (1024 ** 2)
-        bold_mb = bold.numel() * bold.element_size() / (1024 ** 2)
+        # 3. Dataset de Test
+        if self.hparams.test_features_path and self.hparams.test_bold_path:
+            self.test_dataset = self._prepare_dataset(self.hparams.test_features_path, self.hparams.test_bold_path)
+        else:
+            self.test_dataset = self.val_dataset
+
         print(
-            f"TemporalDataModule: train={train_size}, val={val_size}, "
-            f"windows={total}, mem_base={feat_mb+bold_mb:.1f}MB"
+            f"TemporalDataModule: train={len(self.train_dataset)} windows, "
+            f"val={len(self.val_dataset)} windows, test={len(self.test_dataset)} windows"
         )
 
     def train_dataloader(self):
@@ -120,4 +136,4 @@ class TemporalAlgonautsDataModule(L.LightningDataModule):
         return DataLoader(self.val_dataset, batch_size=self.hparams.batch_size, shuffle=False, num_workers=0)
 
     def test_dataloader(self):
-        return DataLoader(self.val_dataset, batch_size=self.hparams.batch_size, shuffle=False, num_workers=0)
+        return DataLoader(self.test_dataset, batch_size=self.hparams.batch_size, shuffle=False, num_workers=0)

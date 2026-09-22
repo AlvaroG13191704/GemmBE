@@ -1,25 +1,32 @@
 """
-prepare_train_test_split.py — Prepara datos con Season 6 como hold-out estricto.
+prepare_train_test_split.py — Prepara datos con validación y test episódicos sin leakage.
 
-Separa:
-  TRAIN: Seasons 1-5 + Movies (todo excepto Season 6 de Friends)
-  TEST:  Season 6 de Friends (episodios completos, nunca vistos en entrenamiento)
+Split riguroso por temporadas completas:
+  TRAIN: Seasons 1-4 + Movies (~53k TRs, ~22h de contenido)
+  VAL:   Season 5 de Friends (~22k TRs, ~9h de contenido, nunca visto en entrenamiento)
+  TEST:  Season 6 de Friends (~23k TRs, ~9.5h de contenido, nunca visto en entrenamiento ni validación)
 
 Aplica normalización z-score usando SOLO estadísticas del TRAIN set.
-Esto evita data leakage y es comparable con la metodología de TriBE v1.
+Esto elimina al 100% el data leakage de ventanas temporales (0% overlap)
+y satisface el requerimiento del Reviewer #3.
 
 Uso:
     uv run python -m src.prepare_train_test_split
 
-Salida:
-    data/train_test_split/
-        ├── features_train.pt          # Features de entrenamiento
-        ├── features_test.pt           # Features de test (S6)
-        ├── bold_train_sub-01.pt       # fMRI train sub-01
-        ├── bold_test_sub-01.pt        # fMRI test sub-01
-        ├── bold_train_sub-02.pt
-        ├── bold_test_sub-02.pt
-        └── split_info.json            # Metadatos del split
+Salida en data/train_test_split/:
+    ├── features_train.pt
+    ├── features_val.pt
+    ├── features_test.pt
+    ├── features_textonly_train.pt
+    ├── features_textonly_val.pt
+    ├── features_textonly_test.pt
+    ├── bold_train_sub-01.pt
+    ├── bold_val_sub-01.pt
+    ├── bold_test_sub-01.pt
+    ├── bold_train_sub-02.pt
+    ├── bold_val_sub-02.pt
+    ├── bold_test_sub-02.pt
+    └── split_info.json
 """
 
 import argparse
@@ -32,19 +39,28 @@ import numpy as np
 import torch
 
 
-def identify_season6_indices(tracker_path: Path) -> set[int]:
-    """Identifica los índices de chunks que pertenecen a Season 6."""
+def identify_episodic_indices(tracker_path: Path) -> tuple[set[int], set[int], set[int]]:
+    """
+    Identifica los índices de chunks para Train (S1-S4 + Movies), Val (S5) y Test (S6).
+    """
     with open(tracker_path, "r") as f:
         tracker = json.load(f)
 
-    s6_indices = set()
+    s6_test_indices = set()
+    s5_val_indices = set()
+    train_indices = set()
+
     for chunk in tracker["chunks"]:
         key = chunk["key"]
-        # Season 6: task-s06eXX
+        idx = chunk["index"]
         if "task-s06" in key:
-            s6_indices.add(chunk["index"])
+            s6_test_indices.add(idx)
+        elif "task-s05" in key:
+            s5_val_indices.add(idx)
+        else:
+            train_indices.add(idx)
 
-    return s6_indices
+    return train_indices, s5_val_indices, s6_test_indices
 
 
 def _parse_chunk_key(key: str) -> tuple:
@@ -57,7 +73,6 @@ def _parse_chunk_key(key: str) -> tuple:
 
     Retorna tupla (category_order, season_or_name, episode, part_or_run)
     """
-    # Intentar parsear Friends
     friends_match = re.match(r"ses-\d+_task-s(\d+)e(\d+)([ab])", key)
     if friends_match:
         season = int(friends_match.group(1))
@@ -65,48 +80,35 @@ def _parse_chunk_key(key: str) -> tuple:
         part = friends_match.group(3)
         return (0, season, episode, part)
 
-    # Intentar parsear Movies
     movie_match = re.match(r"ses-\d+_task-([a-z]+)(\d+)(?:_run-(\d+))?", key)
     if movie_match:
         name = movie_match.group(1)
         episode = int(movie_match.group(2))
         run = int(movie_match.group(3)) if movie_match.group(3) else 1
-        # Orden de películas: bourne, wolf, figures, life
         name_order = {"bourne": 0, "wolf": 1, "figures": 2, "life": 3}
         name_idx = name_order.get(name, 99)
         return (1, name_idx, episode, run)
 
-    # Fallback: ordenar alfabéticamente al final
     return (99, key, 0, "")
 
 
 def load_and_split_features(
     chunks_dir: Path,
-    s6_indices: set[int],
+    train_indices: set[int],
+    val_indices: set[int],
+    test_indices: set[int],
     tracker_path: Path,
-) -> tuple[torch.Tensor, torch.Tensor, dict]:
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, dict]:
     """
     Carga todos los chunks de features, los ordena cronológicamente,
-    y los separa en train/test.
-
-    Args:
-        chunks_dir: Directorio con chunk_{i:03d}.pt
-        s6_indices: Índices de chunks de Season 6
-        tracker_path: Path al tracker JSON (necesario para orden cronológico)
-
-    Returns:
-        features_train, features_test, info
+    y los separa en train/val/test.
     """
-    # Cargar tracker para obtener el orden cronológico
     with open(tracker_path, "r") as f:
         tracker = json.load(f)
 
-    # Mapear índice -> key para ordenar
     chunk_info_by_index = {c["index"]: c for c in tracker["chunks"]}
-
-    # Cargar todos los chunks disponibles
     chunk_files = sorted(chunks_dir.glob("chunk_*.pt"))
-    print(f"Chunks disponibles: {len(chunk_files)}")
+    print(f"Chunks disponibles en {chunks_dir.parent.name}: {len(chunk_files)}")
 
     loaded_chunks = []
     for chunk_file in chunk_files:
@@ -115,68 +117,62 @@ def load_and_split_features(
         key = chunk_info_by_index.get(idx, {}).get("key", f"unknown_{idx}")
         loaded_chunks.append((idx, key, tensor))
 
-    # Ordenar cronológicamente por key (no por índice de procesamiento)
     loaded_chunks.sort(key=lambda x: _parse_chunk_key(x[1]))
 
     train_chunks = []
+    val_chunks = []
     test_chunks = []
-    train_indices = []
-    test_indices = []
     chronological_order = []
 
     for idx, key, tensor in loaded_chunks:
         chronological_order.append({"index": idx, "key": key})
-        if idx in s6_indices:
+        if idx in test_indices:
             test_chunks.append(tensor)
-            test_indices.append(idx)
+        elif idx in val_indices:
+            val_chunks.append(tensor)
         else:
             train_chunks.append(tensor)
-            train_indices.append(idx)
 
     if not train_chunks:
-        raise ValueError("No hay chunks de entrenamiento!")
+        raise ValueError(f"No hay chunks de train en {chunks_dir}!")
+    if not val_chunks:
+        raise ValueError(f"No hay chunks de validación (Season 5) en {chunks_dir}!")
     if not test_chunks:
-        raise ValueError("No hay chunks de test (Season 6)!")
+        raise ValueError(f"No hay chunks de test (Season 6) en {chunks_dir}!")
 
     features_train = torch.cat(train_chunks, dim=0)
+    features_val = torch.cat(val_chunks, dim=0)
     features_test = torch.cat(test_chunks, dim=0)
 
     info = {
         "train_chunks": len(train_chunks),
+        "val_chunks": len(val_chunks),
         "test_chunks": len(test_chunks),
-        "train_indices": train_indices,
-        "test_indices": test_indices,
         "chronological_order": chronological_order,
         "train_trs": features_train.shape[0],
+        "val_trs": features_val.shape[0],
         "test_trs": features_test.shape[0],
     }
 
-    return features_train, features_test, info
+    return features_train, features_val, features_test, info
 
 
 def load_and_split_fmri(
     fmri_path: Path,
     tracker_path: Path,
-    s6_indices: set[int],
+    train_indices: set[int],
+    val_indices: set[int],
+    test_indices: set[int],
     chronological_order: list[dict] = None,
-) -> tuple[np.ndarray, np.ndarray, dict]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, dict]:
     """
-    Carga fMRI de un sujeto y lo separa en train/test siguiendo los mismos chunks.
-
-    El fMRI se trunca EXACTAMENTE al número de TRs del chunk de estímulo
-    para mantener sincronización perfecta.
-
-    Args:
-        chronological_order: Lista de dicts con 'index' y 'key' en orden cronológico.
-            Si se proporciona, itera en ese orden. Si no, usa orden del tracker.
+    Carga fMRI de un sujeto y lo separa en train/val/test siguiendo los mismos chunks.
     """
     with open(tracker_path, "r") as f:
         tracker = json.load(f)
 
-    # Build map: index -> chunk_data
     chunk_info = {c["index"]: c for c in tracker["chunks"]}
 
-    # Determinar orden de iteración
     if chronological_order is not None:
         ordered_chunks = chronological_order
     else:
@@ -184,6 +180,7 @@ def load_and_split_fmri(
 
     with h5py.File(fmri_path, "r") as f:
         train_fmri = []
+        val_fmri = []
         test_fmri = []
 
         for chunk_entry in ordered_chunks:
@@ -193,11 +190,9 @@ def load_and_split_fmri(
             if chunk_data is None or not chunk_data["processed"]:
                 continue
 
-            # Match by task suffix (session numbers are subject-specific)
             tracker_key = chunk_data["key"]
-            task_suffix = tracker_key.split("_")[-1]  # e.g., "task-s06e01a"
+            task_suffix = tracker_key.split("_")[-1]
 
-            # Find matching key in HDF5
             matched_key = None
             for h5_key in f.keys():
                 if h5_key.endswith(task_suffix):
@@ -211,50 +206,47 @@ def load_and_split_fmri(
             if fmri_chunk.ndim == 1:
                 fmri_chunk = fmri_chunk.reshape(1, -1)
 
-            # Transpose if needed (should be (num_trs, 1000))
             if fmri_chunk.shape[1] != 1000 and fmri_chunk.shape[0] == 1000:
                 fmri_chunk = fmri_chunk.T
 
-            # Truncate to match stimulus TRs
             num_trs_stimulus = chunk_data["num_trs_extracted"]
             if fmri_chunk.shape[0] > num_trs_stimulus:
                 fmri_chunk = fmri_chunk[:num_trs_stimulus]
 
-            if idx in s6_indices:
+            if idx in test_indices:
                 test_fmri.append(fmri_chunk)
+            elif idx in val_indices:
+                val_fmri.append(fmri_chunk)
             else:
                 train_fmri.append(fmri_chunk)
 
-    if not train_fmri:
-        raise ValueError("No hay fMRI de entrenamiento!")
-
-    train_array = np.concatenate(train_fmri, axis=0)
-    if test_fmri:
-        test_array = np.concatenate(test_fmri, axis=0)
-    else:
-        test_array = np.empty((0, train_array.shape[1]), dtype=np.float32)
+    train_array = np.concatenate(train_fmri, axis=0) if train_fmri else np.empty((0, 1000), dtype=np.float32)
+    val_array = np.concatenate(val_fmri, axis=0) if val_fmri else np.empty((0, 1000), dtype=np.float32)
+    test_array = np.concatenate(test_fmri, axis=0) if test_fmri else np.empty((0, 1000), dtype=np.float32)
 
     info = {
         "train_trs": train_array.shape[0],
+        "val_trs": val_array.shape[0],
         "test_trs": test_array.shape[0],
     }
 
-    return train_array, test_array, info
+    return train_array, val_array, test_array, info
 
 
 def normalize_bold(
     train_bold: torch.Tensor,
+    val_bold: torch.Tensor,
     test_bold: torch.Tensor,
-) -> tuple[torch.Tensor, torch.Tensor, dict]:
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, dict]:
     """
     Aplica z-score normalization usando SOLO estadísticas del train set.
-    Esto es CRÍTICO para evitar data leakage.
     """
     mean = train_bold.mean(dim=0, keepdim=True)
     std = train_bold.std(dim=0, keepdim=True).clamp(min=1e-8)
 
     train_normalized = (train_bold - mean) / std
-    test_normalized = (test_bold - mean) / std  # Usa stats de train!
+    val_normalized = (val_bold - mean) / std
+    test_normalized = (test_bold - mean) / std
 
     stats = {
         "mean": mean.squeeze().tolist(),
@@ -263,30 +255,18 @@ def normalize_bold(
         "std_max": std.max().item(),
     }
 
-    return train_normalized, test_normalized, stats
+    return train_normalized, val_normalized, test_normalized, stats
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Prepara split train/test con Season 6 como hold-out"
+        description="Prepara split train/val/test episódico (S1-S4+Movies -> Train, S5 -> Val, S6 -> Test)"
     )
     parser.add_argument(
         "--output_dir",
         type=str,
         default="data/train_test_split",
         help="Directorio de salida",
-    )
-    parser.add_argument(
-        "--chunks_dir",
-        type=str,
-        default="data/features/chunks",
-        help="Directorio con chunk_{i:03d}.pt",
-    )
-    parser.add_argument(
-        "--tracker",
-        type=str,
-        default="data/features/processed_chunks.json",
-        help="Tracker de chunks procesados",
     )
     parser.add_argument(
         "--fmri_dir",
@@ -304,50 +284,70 @@ def main():
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
-    chunks_dir = Path(args.chunks_dir)
-    tracker_path = Path(args.tracker)
     fmri_dir = Path(args.fmri_dir)
 
     print("=" * 60)
-    print("PREPARANDO SPLIT TRAIN/TEST (Season 6 Hold-Out)")
+    print("PREPARANDO SPLIT TRAIN/VAL/TEST EPISÓDICO (Leakage-Free)")
+    print("Train: Seasons 1-4 + Movies")
+    print("Val:   Season 5 (Early Stopping limpio)")
+    print("Test:  Season 6 (Hold-out final)")
     print("=" * 60)
 
-    # 1. Identificar Season 6
-    s6_indices = identify_season6_indices(tracker_path)
-    print(f"\nSeason 6 chunks: {len(s6_indices)} chunks")
-    print(f"Indices: {min(s6_indices)} - {max(s6_indices)}")
+    multimodal_tracker = Path("data/features/processed_chunks.json")
+    textonly_tracker = Path("data/features_text_only/processed_chunks.json")
 
-    # 2. Separar features
+    train_idx, val_idx, test_idx = identify_episodic_indices(multimodal_tracker)
+    print(f"\nChunks asignados:")
+    print(f"  Train (S1-S4 + Movies): {len(train_idx)} chunks")
+    print(f"  Val   (Season 5):       {len(val_idx)} chunks")
+    print(f"  Test  (Season 6):       {len(test_idx)} chunks")
+
+    # 1. Separar features Multimodales
     print(f"\n{'=' * 60}")
-    print("Procesando FEATURES")
+    print("Procesando FEATURES MULTIMODALES")
     print(f"{'=' * 60}")
-
-    features_train, features_test, feat_info = load_and_split_features(
-        chunks_dir, s6_indices, tracker_path
+    mm_train, mm_val, mm_test, mm_info = load_and_split_features(
+        Path("data/features/chunks"), train_idx, val_idx, test_idx, multimodal_tracker
     )
+    torch.save(mm_train, output_dir / "features_train.pt")
+    torch.save(mm_val, output_dir / "features_val.pt")
+    torch.save(mm_test, output_dir / "features_test.pt")
+    print(f"  Train: {mm_info['train_trs']} TRs | Val: {mm_info['val_trs']} TRs | Test: {mm_info['test_trs']} TRs")
 
-    print(f"  Train: {feat_info['train_chunks']} chunks, {feat_info['train_trs']} TRs")
-    print(f"  Test:  {feat_info['test_chunks']} chunks, {feat_info['test_trs']} TRs")
+    # 2. Separar features Text-Only
+    if textonly_tracker.exists() and Path("data/features_text_only/chunks").exists():
+        print(f"\n{'=' * 60}")
+        print("Procesando FEATURES TEXT-ONLY")
+        print(f"{'=' * 60}")
+        to_train, to_val, to_test, to_info = load_and_split_features(
+            Path("data/features_text_only/chunks"), train_idx, val_idx, test_idx, textonly_tracker
+        )
+        torch.save(to_train, output_dir / "features_textonly_train.pt")
+        torch.save(to_val, output_dir / "features_textonly_val.pt")
+        torch.save(to_test, output_dir / "features_textonly_test.pt")
+        print(f"  Train: {to_info['train_trs']} TRs | Val: {to_info['val_trs']} TRs | Test: {to_info['test_trs']} TRs")
 
-    # 3. Procesar cada sujeto
+    # 3. Procesar fMRI de cada sujeto
     all_info = {
-        "season6_indices": sorted(list(s6_indices)),
-        "features": feat_info,
+        "train_indices": sorted(list(train_idx)),
+        "val_indices": sorted(list(val_idx)),
+        "test_indices": sorted(list(test_idx)),
+        "multimodal_features": mm_info,
         "subjects": {},
-        "normalization": "z-score per parcel (fit on train, apply to train+test)",
+        "normalization": "z-score per parcel (fit strictly on train, applied to train+val+test)",
     }
 
     for subject_id in args.subjects:
         print(f"\n{'=' * 60}")
-        print(f"Procesando {subject_id}")
+        print(f"Procesando fMRI para {subject_id}")
         print(f"{'=' * 60}")
 
-        # Load fMRI
         func_dir = fmri_dir / subject_id / "func"
         friends_file = func_dir / f"{subject_id}_task-friends_space-MNI152NLin2009cAsym_atlas-Schaefer18_parcel-1000Par7Net_desc-s123456_bold.h5"
         movie_file = func_dir / f"{subject_id}_task-movie10_space-MNI152NLin2009cAsym_atlas-Schaefer18_parcel-1000Par7Net_bold.h5"
 
         train_fmri_parts = []
+        val_fmri_parts = []
         test_fmri_parts = []
 
         for h5_path in [friends_file, movie_file]:
@@ -355,58 +355,49 @@ def main():
                 print(f"  {h5_path.name} no encontrado, saltando")
                 continue
 
-            train_arr, test_arr, fmri_info = load_and_split_fmri(
-                h5_path, tracker_path, s6_indices,
-                chronological_order=feat_info.get("chronological_order")
+            train_arr, val_arr, test_arr, fmri_info = load_and_split_fmri(
+                h5_path, multimodal_tracker, train_idx, val_idx, test_idx,
+                chronological_order=mm_info.get("chronological_order")
             )
             train_fmri_parts.append(train_arr)
+            val_fmri_parts.append(val_arr)
             test_fmri_parts.append(test_arr)
 
         train_bold_np = np.concatenate(train_fmri_parts, axis=0)
-        test_bold_np = np.concatenate(test_fmri_parts, axis=0) if test_fmri_parts else np.empty((0, train_bold_np.shape[1]), dtype=np.float32)
+        val_bold_np = np.concatenate(val_fmri_parts, axis=0)
+        test_bold_np = np.concatenate(test_fmri_parts, axis=0)
 
         print(f"  fMRI train: {train_bold_np.shape[0]} TRs")
+        print(f"  fMRI val:   {val_bold_np.shape[0]} TRs")
         print(f"  fMRI test:  {test_bold_np.shape[0]} TRs")
 
-        # Convert to tensors
         train_bold = torch.from_numpy(train_bold_np).float()
+        val_bold = torch.from_numpy(val_bold_np).float()
         test_bold = torch.from_numpy(test_bold_np).float()
 
-        # Normalize (fit on train only!)
-        train_bold_norm, test_bold_norm, norm_stats = normalize_bold(
-            train_bold, test_bold
+        train_norm, val_norm, test_norm, norm_stats = normalize_bold(
+            train_bold, val_bold, test_bold
         )
 
-        print(f"  Normalización: mean={np.mean(norm_stats['mean']):.4f}, "
-              f"std_mean={norm_stats['std_mean']:.4f}")
-
-        # Save
-        torch.save(features_train, output_dir / "features_train.pt")
-        torch.save(features_test, output_dir / "features_test.pt")
-        torch.save(train_bold_norm, output_dir / f"bold_train_{subject_id}.pt")
-        torch.save(test_bold_norm, output_dir / f"bold_test_{subject_id}.pt")
+        torch.save(train_norm, output_dir / f"bold_train_{subject_id}.pt")
+        torch.save(val_norm, output_dir / f"bold_val_{subject_id}.pt")
+        torch.save(test_norm, output_dir / f"bold_test_{subject_id}.pt")
 
         all_info["subjects"][subject_id] = {
-            "train_trs": train_bold_norm.shape[0],
-            "test_trs": test_bold_norm.shape[0],
+            "train_trs": train_norm.shape[0],
+            "val_trs": val_norm.shape[0],
+            "test_trs": test_norm.shape[0],
             "normalization_stats": norm_stats,
         }
 
-    # Save metadata
     info_path = output_dir / "split_info.json"
     with open(info_path, "w") as f:
         json.dump(all_info, f, indent=2)
 
     print(f"\n{'=' * 60}")
-    print("SPLIT COMPLETADO")
+    print("SPLIT COMPLETADO EXITOSAMENTE")
+    print(f"Archivos guardados en: {output_dir}")
     print(f"{'=' * 60}")
-    print(f"Directorio: {output_dir}")
-    print(f"Metadatos: {info_path}")
-    print(f"\nResumen:")
-    print(f"  Train: {feat_info['train_trs']} TRs (~{feat_info['train_trs'] * 1.49 / 3600:.1f}h)")
-    print(f"  Test:  {feat_info['test_trs']} TRs (~{feat_info['test_trs'] * 1.49 / 3600:.1f}h)")
-    print(f"  Season 6 chunks: {len(s6_indices)}")
-    print(f"  Sujetos: {', '.join(args.subjects)}")
 
 
 if __name__ == "__main__":

@@ -26,6 +26,7 @@ from sklearn.preprocessing import StandardScaler
 def train_ridge_baseline(
     split_dir: str = "data/train_test_split",
     subject_id: str = "sub-01",
+    stimulus: str = "multimodal",
     alphas: list = None,
     save_dir: str = "results/ridge_baseline",
 ) -> dict:
@@ -35,6 +36,7 @@ def train_ridge_baseline(
     Args:
         split_dir: Directorio con features_train.pt, features_test.pt, etc.
         subject_id: Sujeto a evaluar (sub-01 o sub-02).
+        stimulus: 'multimodal' o 'textonly'.
         alphas: Lista de alphas para RidgeCV. Default: logspace(-1, 4, 20).
         save_dir: Directorio para guardar resultados.
 
@@ -45,20 +47,25 @@ def train_ridge_baseline(
         alphas = np.logspace(-1, 4, 20).tolist()
 
     split_path = Path(split_dir)
-    output_dir = Path(save_dir) / f"ridge_{subject_id}"
+    run_name = f"ridge_{stimulus}_{subject_id}" if stimulus != "multimodal" else f"ridge_{subject_id}"
+    output_dir = Path(save_dir) / run_name
     output_dir.mkdir(parents=True, exist_ok=True)
 
     print(f"\n{'='*60}")
-    print(f"Ridge Baseline — {subject_id}")
+    print(f"Ridge Baseline — {stimulus} — {subject_id}")
     print(f"{'='*60}")
 
     # ─── Cargar datos ──────────────────────────────────────────────────────────
-    features_train = torch.load(
-        split_path / "features_train.pt", weights_only=True
-    ).float().numpy()
-    features_test = torch.load(
-        split_path / "features_test.pt", weights_only=True
-    ).float().numpy()
+    feat_prefix = "features_textonly" if stimulus == "textonly" else "features"
+    train_feat_path = split_path / f"{feat_prefix}_train.pt"
+    test_feat_path = split_path / f"{feat_prefix}_test.pt"
+
+    if not train_feat_path.exists():
+        train_feat_path = split_path / "features_train.pt"
+        test_feat_path = split_path / "features_test.pt"
+
+    features_train = torch.load(train_feat_path, weights_only=True).float().numpy()
+    features_test = torch.load(test_feat_path, weights_only=True).float().numpy()
     bold_train = torch.load(
         split_path / f"bold_train_{subject_id}.pt", weights_only=True
     ).float().numpy()
